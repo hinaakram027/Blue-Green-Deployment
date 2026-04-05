@@ -1,6 +1,10 @@
 pipeline {
     agent any
     
+    tools {
+        maven "maven3"
+    }
+    
     parameters {
         choice(name: 'DEPLOY_ENV', choices: ['blue', 'green'], description: 'Choose which environment to deploy: Blue or Green')
         choice(name: 'DOCKER_TAG', choices: ['blue', 'green'], description: 'Choose the Docker image tag for the deployment')
@@ -8,42 +12,57 @@ pipeline {
     }
     
     environment {
-        IMAGE_NAME = "adijaiswal/bankapp"
+        IMAGE_NAME = "hinaar/bankapp"
         TAG = "${params.DOCKER_TAG}"  // The image tag now comes from the parameter
         KUBE_NAMESPACE = 'webapps'
-        SCANNER_HOME= tool 'sonar-scanner'
+        SONAR_HOME= tool 'Sonar'
     }
 
     stages {
         stage('Git Checkout') {
             steps {
-                git branch: 'main', credentialsId: 'git-cred', url: 'https://github.com/jaiswaladi246/3-Tier-NodeJS-MySql-Docker.git'
+                git url: "", branch: "main"
+            }
+        }
+
+        stage('Compile') {
+            steps {
+                sh "mvn compile"
+            }
+        }
+
+        stage('Tests') {
+            steps {
+                sh "mvn test -DskipTests=true"
+            }
+        }
+
+        stage('Trivy File Scan') {
+            steps {
+                sh "trivy fs --format table -o trivy-fs-report.html ."
             }
         }
         
         stage('SonarQube Analysis') {
             steps {
-                withSonarQubeEnv('sonar') {
-                    sh "$SCANNER_HOME/bin/sonar-scanner -Dsonar.projectKey=nodejsmysql -Dsonar.projectName=nodejsmysql"
+                withSonarQubeEnv('Sonar') {
+                    sh "$SONAR_HOME/bin/sonar-scanner -Dsonar.projectKey= -Dsonar.projectName= -Dsonar.java.binaries=target"
                 }
             }
         }
         
-        stage('Trivy FS Scan') {
+        stage('Build') {
             steps {
-                sh "trivy fs --format table -o fs.html ."
+                sh "mvn package -DskipTests=true"
             }
         }
         
-        stage('Docker build') {
+        stage('Docker Build Image') {
             steps {
-                script {
-                    withDockerRegistry(credentialsId: 'docker-cred') {
-                        sh "docker build -t ${IMAGE_NAME}:${TAG} ."
+                sh "docker build -t ${IMAGE_NAME}:${TAG} ."
                     }
                 }
-            }
-        }
+            
         
         stage('Trivy Image Scan') {
             steps {
@@ -54,9 +73,10 @@ pipeline {
         stage('Docker Push Image') {
             steps {
                 script {
-                    withDockerRegistry(credentialsId: 'docker-cred') {
-                        sh "docker push ${IMAGE_NAME}:${TAG}"
+                    withCredentials([string(credentialsId: hinaardocker, variable: hinaardocker)]) {
+                        sh "docker login -u hinaar -p ${hinaardocker}"
                     }
+                    sh "docker push ${IMAGE_NAME}:${TAG}"
                 }
             }
         }
